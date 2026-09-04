@@ -1,0 +1,11 @@
+import { useState } from 'react'
+import { Link, Navigate, useNavigate } from 'react-router-dom'
+import { useAuth } from '../context/AuthContext'
+
+export default function Login() {
+  const { user, login } = useAuth(); const navigate = useNavigate(); const [form, setForm] = useState({ email: '', password: '' }); const [error, setError] = useState(''); const [submitting, setSubmitting] = useState(false)
+  if (user) return <Navigate to="/dashboard" replace />
+  const submit = async (event) => { event.preventDefault(); setError(''); setSubmitting(true); try { await login(form); navigate('/dashboard') } catch (err) { setError(err.message) } finally { setSubmitting(false) } }
+  return <AuthLayout eyebrow="Welcome back" title="Sign in to your account" footer={<>New here? <Link to="/register">Create an account</Link></>}><form onSubmit={submit} className="auth-form"><label>Email address<input type="email" required autoComplete="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></label><label>Password<input type="password" required autoComplete="current-password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} /></label>{error && <p className="form-message error" role="alert">{error}</p>}<button className="primary-button" disabled={submitting}>{submitting ? 'Signing in...' : 'Sign in'} <span aria-hidden="true">→</span></button></form></AuthLayout>
+}
+export function AuthLayout({ eyebrow, title, children, footer }) { return <main className="auth-shell"><section className="auth-intro"><div className="brand-mark">A<span>/</span>O</div><div className="intro-copy"><p className="eyebrow">Private by design</p><h1>Keep your digital life in order.</h1><p>A quiet, secure space for the things that matter.</p></div><p className="intro-meta">Authentication platform<br />v1.0 / built for the long run</p></section><section className="auth-panel"><div className="auth-card"><p className="eyebrow">{eyebrow}</p><h2>{title}</h2>{children}<p className="auth-footer">{footer}</p></div></section></main> }

@@ -1,0 +1,31 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    env_file:
+      - ./backend/.env
+    command: >-
+      sh -c 'export POSTGRES_DB="$${DB_NAME}" POSTGRES_USER="$${DB_USER}"
+      POSTGRES_PASSWORD="$${DB_PASSWORD}"; exec docker-entrypoint.sh postgres'
+    ports: ["5432:5432"]
+    volumes: ["postgres_data:/var/lib/postgresql/data", "./database/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro"]
+  backend:
+    build: ./backend
+    env_file:
+      - ./backend/.env
+    environment:
+      DB_HOST: postgres
+      JWT_SECRET_KEY: local-development-secret-change-me
+      JWT_ALGORITHM: HS256
+      JWT_EXPIRE_MINUTES: 60
+      FRONTEND_URL: http://localhost:5173
+    ports: ["8000:8000"]
+    depends_on: [postgres]
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: http://localhost:8000
+    ports: ["5173:80"]
+    depends_on: [backend]
+volumes:
+  postgres_data:
