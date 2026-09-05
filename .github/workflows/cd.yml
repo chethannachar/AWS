@@ -29,3 +29,4 @@ jobs:
             sudo systemctl restart fastapi
 
             sudo systemctl status fastapi --no-pager
+# CD pipeline test
