@@ -42,3 +42,4 @@ jobs:
         run: |
           python -c "import app; print('APP IMPORT:', app.__file__)"
           pytest
+# CI/CD pipeline test
