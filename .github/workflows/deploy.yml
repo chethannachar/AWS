@@ -38,6 +38,7 @@ jobs:
         working-directory: backend
         env:
           PYTHONPATH: .
+          JWT_SECRET_KEY: "ci-test-secret-key-that-is-at-least-32-characters-long"
         run: |
           python -c "import app; print('APP IMPORT:', app.__file__)"
           pytest
