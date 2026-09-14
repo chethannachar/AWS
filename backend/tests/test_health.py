@@ -1,6 +1,11 @@
 from fastapi.testclient import TestClient
 from app.main import app
 
+def test_root_deployment_message():
+    assert TestClient(app).get('/').json() == {
+        'message': 'CI/CD pipeline deployed the latest backend code',
+    }
+
 def test_health():
     assert TestClient(app).get('/api/health').json() == {'status': 'ok'}
 
