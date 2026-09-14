@@ -11,3 +11,7 @@ app.include_router(health.router); app.include_router(auth.router)
 
 @app.get('/api/cicd-test')
 def cicd_test(): return {'message': 'CI/CD deployment successful'}
+
+@app.get('/api/deployment-status')
+def deployment_status():
+	return {'message': 'Backend deployment is running the latest code', 'status': 'ok'}
