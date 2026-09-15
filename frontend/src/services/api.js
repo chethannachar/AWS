@@ -7,4 +7,4 @@ async function request(path, options = {}) {
   return data
 }
 
-export const api = { register: (payload) => request('/api/auth/register', { method: 'POST', body: JSON.stringify(payload) }), login: (payload) => request('/api/auth/login', { method: 'POST', body: JSON.stringify(payload) }), me: () => request('/api/auth/me'), logout: () => request('/api/auth/logout', { method: 'POST' }), cicdTest: () => request('/api/cicd-test') }
+export const api = { register: (payload) => request('/api/auth/register', { method: 'POST', body: JSON.stringify(payload) }), login: (payload) => request('/api/auth/login', { method: 'POST', body: JSON.stringify(payload) }), me: () => request('/api/auth/me'), logout: () => request('/api/auth/logout', { method: 'POST' }), cicdTest: () => request('/api/cicd-test'), appInfo: () => request('/api/app-info') }
