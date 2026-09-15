@@ -19,7 +19,7 @@ def create_user(name, email, password):
     with get_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute('SELECT id FROM users WHERE email = %s', (email,))
-            if cursor.fetchone(): raise HTTPException(status_code=409, detail='An account with this email already eists.')
+            if cursor.fetchone(): raise HTTPException(status_code=409, detail='An account with this lready eists.')
             cursor.execute('INSERT INTO users (name, email, password_hash) VALUES (%s, %s, %s) RETURNING id, name, email, created_at', (name, email, hash_password(password)))
             return cursor.fetchone()
 
