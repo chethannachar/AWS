@@ -1,0 +1,71 @@
+name: Deploy Backend to AWS
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ap-south-1
+
+      - name: Find ASG instances
+        id: instances
+        shell: bash
+        run: |
+          INSTANCE_IDS=$(aws autoscaling describe-auto-scaling-groups \
+            --auto-scaling-group-names vocabulary-backend-asg \
+            --query 'AutoScalingGroups[0].Instances[?LifecycleState==`InService`].InstanceId' \
+            --output text)
+
+          if [ -z "$INSTANCE_IDS" ]; then
+            echo "No InService instances found in the ASG."
+            exit 1
+          fi
+
+          echo "Found ASG instances: $INSTANCE_IDS"
+          echo "instance_ids=$INSTANCE_IDS" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy to ASG instances
+        shell: bash
+        run: |
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids ${{ steps.instances.outputs.instance_ids }} \
+            --document-name "AWS-RunShellScript" \
+            --comment "Deploy latest Vocabulary backend" \
+            --parameters 'commands=[
+              "cd /home/ubuntu/AWS",
+              "git fetch origin",
+              "git reset --hard origin/main",
+              "/home/ubuntu/AWS/backend/.venv/bin/pip install -r /home/ubuntu/AWS/backend/requirements.txt",
+              "sudo systemctl restart fastapi",
+              "sudo systemctl is-active --quiet fastapi"
+            ]' \
+            --query "Command.CommandId" \
+            --output text)
+
+          echo "SSM Command ID: $COMMAND_ID"
+
+          for INSTANCE_ID in ${{ steps.instances.outputs.instance_ids }}; do
+            echo "Waiting for deployment on $INSTANCE_ID..."
+
+            aws ssm wait command-executed \
+              --command-id "$COMMAND_ID" \
+              --instance-id "$INSTANCE_ID"
+
+            echo "Deployment successful on $INSTANCE_ID"
+          done
