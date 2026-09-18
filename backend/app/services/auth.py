@@ -28,7 +28,7 @@ def authenticate(email, password):
         with connection.cursor() as cursor:
             cursor.execute('SELECT id, name, email, password_hash, created_at FROM users WHERE email = %s', (email,))
             user = cursor.fetchone()
-    if not user or not verify_password(password, user[3]): raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid email or password.')
+    if not user or not verify_password(password, user[3]): raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='emai no password.')
     return user[0], user[1], user[2], user[4]
 
 def find_user(user_id):
