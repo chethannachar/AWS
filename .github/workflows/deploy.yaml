@@ -98,7 +98,7 @@ jobs:
         id: launch-template
         run: |
           NEW_LT_VERSION=$(aws ec2 create-launch-template-version \
-            --launch-template-id "${{ vars.LAUNCH_TEMPLATE_ID }}" \
+            --launch-template-id "lt-001a75de2fab1b601" \
             --source-version '$Latest' \
             --version-description "GitHub Actions deployment - $GITHUB_SHA" \
             --launch-template-data "{\"ImageId\":\"$NEW_AMI_ID\"}" \
@@ -118,8 +118,8 @@ jobs:
       - name: Update Auto Scaling Group
         run: |
           aws autoscaling update-auto-scaling-group \
-            --auto-scaling-group-name "${{ vars.ASG_NAME }}" \
-            --launch-template "LaunchTemplateId=${{ vars.LAUNCH_TEMPLATE_ID }},Version=$NEW_LT_VERSION"
+            --auto-scaling-group-name "vocabulary-backend-asg" \
+            --launch-template "LaunchTemplateId=lt-001a75de2fab1b601,Version=$NEW_LT_VERSION"
 
           echo "Auto Scaling Group updated."
 
@@ -127,7 +127,7 @@ jobs:
         id: refresh
         run: |
           REFRESH_ID=$(aws autoscaling start-instance-refresh \
-            --auto-scaling-group-name "${{ vars.ASG_NAME }}" \
+            --auto-scaling-group-name "vocabulary-backend-asg" \
             --preferences MinHealthyPercentage=100 \
             --query 'InstanceRefreshId' \
             --output text)
@@ -148,7 +148,7 @@ jobs:
 
           for i in {1..60}; do
             STATUS=$(aws autoscaling describe-instance-refreshes \
-              --auto-scaling-group-name "${{ vars.ASG_NAME }}" \
+              --auto-scaling-group-name "vocabulary-backend-asg" \
               --instance-refresh-ids "$REFRESH_ID" \
               --query 'InstanceRefreshes[0].Status' \
               --output text)
@@ -172,3 +172,4 @@ jobs:
 
           echo "Instance Refresh did not complete within the expected time."
           exit 1
+
