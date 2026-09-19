@@ -17,116 +17,130 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Check GitHub repository and branch
-        run: |
-          echo "Repository: $GITHUB_REPOSITORY"
-          echo "Branch: $GITHUB_REF_NAME"
-          echo "Ref: $GITHUB_REF"
-
-      - name: Inspect GitHub OIDC claims
-        shell: bash
-        run: |
-          echo "Checking GitHub OIDC environment..."
-
-          if [ -z "$ACTIONS_ID_TOKEN_REQUEST_URL" ]; then
-            echo "ERROR: ACTIONS_ID_TOKEN_REQUEST_URL is not available"
-            exit 1
-          fi
-
-          if [ -z "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ]; then
-            echo "ERROR: ACTIONS_ID_TOKEN_REQUEST_TOKEN is not available"
-            exit 1
-          fi
-
-          echo "OIDC environment variables are available."
-
-          RESPONSE=$(curl -sSf \
-            -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com")
-
-          TOKEN=$(echo "$RESPONSE" | jq -r '.value')
-
-          if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
-            echo "ERROR: Failed to obtain OIDC token"
-            echo "$RESPONSE"
-            exit 1
-          fi
-
-          PAYLOAD=$(echo "$TOKEN" | cut -d '.' -f 2)
-
-          # Restore base64 padding if necessary
-          case $((${#PAYLOAD} % 4)) in
-            2) PAYLOAD="${PAYLOAD}==" ;;
-            3) PAYLOAD="${PAYLOAD}=" ;;
-          esac
-
-          PAYLOAD=$(echo "$PAYLOAD" | base64 -d 2>/dev/null)
-
-          if [ -z "$PAYLOAD" ]; then
-            echo "ERROR: Failed to decode OIDC token payload"
-            exit 1
-          fi
-
-          echo "GitHub OIDC claims:"
-          echo "$PAYLOAD" | jq '{
-            iss,
-            aud,
-            sub,
-            ref,
-            repository,
-            repository_id,
-            repository_owner_id
-          }'
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ap-south-1
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
 
-      - name: Find ASG instances
-        id: instances
-        shell: bash
+      - name: Start Image Builder pipeline
+        id: image-builder
         run: |
-          INSTANCE_IDS=$(aws autoscaling describe-auto-scaling-groups \
-            --auto-scaling-group-names vocabulary-backend-asg \
-            --query 'AutoScalingGroups[0].Instances[?LifecycleState==`InService`].InstanceId' \
+          IMAGE_BUILD_VERSION_ARN=$(aws imagebuilder start-image-pipeline-execution \
+            --image-pipeline-arn "${{ vars.IMAGE_PIPELINE_ARN }}" \
+            --query 'imageBuildVersionArn' \
             --output text)
 
-          if [ -z "$INSTANCE_IDS" ]; then
-            echo "No InService instances found in the ASG."
+          echo "IMAGE_BUILD_VERSION_ARN=$IMAGE_BUILD_VERSION_ARN" >> "$GITHUB_ENV"
+
+          echo "Started Image Builder:"
+          echo "$IMAGE_BUILD_VERSION_ARN"
+
+      - name: Wait for AMI
+        run: |
+          echo "Waiting for Image Builder to finish..."
+
+          for i in {1..60}; do
+            STATUS=$(aws imagebuilder get-image \
+              --image-build-version-arn "$IMAGE_BUILD_VERSION_ARN" \
+              --query 'image.state.status' \
+              --output text)
+
+            echo "Attempt $i: $STATUS"
+
+            if [ "$STATUS" = "AVAILABLE" ]; then
+              break
+            fi
+
+            if [ "$STATUS" = "FAILED" ]; then
+              echo "Image Builder failed."
+              exit 1
+            fi
+
+            sleep 60
+          done
+
+          if [ "$STATUS" != "AVAILABLE" ]; then
+            echo "Image Builder did not complete within the expected time."
             exit 1
           fi
 
-          echo "Found ASG instances: $INSTANCE_IDS"
-          echo "instance_ids=$INSTANCE_IDS" >> "$GITHUB_OUTPUT"
-
-      - name: Deploy to ASG instances
-        shell: bash
+      - name: Get new AMI ID
+        id: ami
         run: |
-          COMMAND_ID=$(aws ssm send-command \
-            --instance-ids ${{ steps.instances.outputs.instance_ids }} \
-            --document-name "AWS-RunShellScript" \
-            --comment "Deploy latest Vocabulary backend" \
-            --parameters 'commands=[
-              "cd /home/ubuntu/AWS",
-              "git fetch origin",
-              "git reset --hard origin/main",
-              "/home/ubuntu/AWS/backend/.venv/bin/pip install -r /home/ubuntu/AWS/backend/requirements.txt",
-              "sudo systemctl restart fastapi",
-              "sudo systemctl is-active --quiet fastapi"
-            ]' \
-            --query "Command.CommandId" \
+          NEW_AMI_ID=$(aws imagebuilder get-image \
+            --image-build-version-arn "$IMAGE_BUILD_VERSION_ARN" \
+            --query 'image.outputResources.amis[0].image' \
             --output text)
 
-          echo "SSM Command ID: $COMMAND_ID"
+          echo "NEW_AMI_ID=$NEW_AMI_ID" >> "$GITHUB_ENV"
 
-          for INSTANCE_ID in ${{ steps.instances.outputs.instance_ids }}; do
-            echo "Waiting for deployment on $INSTANCE_ID..."
+          echo "New AMI:"
+          echo "$NEW_AMI_ID"
 
-            aws ssm wait command-executed \
-              --command-id "$COMMAND_ID" \
-              --instance-id "$INSTANCE_ID"
+      - name: Create new Launch Template version
+        id: launch-template
+        run: |
+          NEW_LT_VERSION=$(aws ec2 create-launch-template-version \
+            --launch-template-id "${{ vars.LAUNCH_TEMPLATE_ID }}" \
+            --source-version '$Latest' \
+            --version-description "GitHub Actions deployment - $GITHUB_SHA" \
+            --launch-template-data "{\"ImageId\":\"$NEW_AMI_ID\"}" \
+            --query 'LaunchTemplateVersion.VersionNumber' \
+            --output text)
 
-            echo "Deployment successful on $INSTANCE_ID"
+          echo "NEW_LT_VERSION=$NEW_LT_VERSION" >> "$GITHUB_ENV"
+
+          echo "New Launch Template version:"
+          echo "$NEW_LT_VERSION"
+
+      - name: Update Auto Scaling Group
+        run: |
+          aws autoscaling update-auto-scaling-group \
+            --auto-scaling-group-name "${{ vars.ASG_NAME }}" \
+            --launch-template "LaunchTemplateId=${{ vars.LAUNCH_TEMPLATE_ID }},Version=$NEW_LT_VERSION"
+
+          echo "Auto Scaling Group updated."
+
+      - name: Start Instance Refresh
+        id: refresh
+        run: |
+          REFRESH_ID=$(aws autoscaling start-instance-refresh \
+            --auto-scaling-group-name "${{ vars.ASG_NAME }}" \
+            --preferences MinHealthyPercentage=100 \
+            --query 'InstanceRefreshId' \
+            --output text)
+
+          echo "REFRESH_ID=$REFRESH_ID" >> "$GITHUB_ENV"
+
+          echo "Instance Refresh started:"
+          echo "$REFRESH_ID"
+
+      - name: Wait for Instance Refresh
+        run: |
+          echo "Waiting for instances to refresh..."
+
+          for i in {1..60}; do
+            STATUS=$(aws autoscaling describe-instance-refreshes \
+              --auto-scaling-group-name "${{ vars.ASG_NAME }}" \
+              --instance-refresh-ids "$REFRESH_ID" \
+              --query 'InstanceRefreshes[0].Status' \
+              --output text)
+
+            echo "Attempt $i: $STATUS"
+
+            if [ "$STATUS" = "Successful" ]; then
+              echo "Deployment completed successfully."
+              exit 0
+            fi
+
+            if [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Cancelled" ]; then
+              echo "Instance Refresh failed."
+              exit 1
+            fi
+
+            sleep 30
           done
+
+          echo "Instance Refresh did not complete within the expected time."
+          exit 1
