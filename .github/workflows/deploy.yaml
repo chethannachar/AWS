@@ -1,3 +1,4 @@
+
 name: Deploy Backend to AWS
 
 on:
@@ -36,7 +37,7 @@ jobs:
         id: image-builder
         run: |
           IMAGE_BUILD_VERSION_ARN=$(aws imagebuilder start-image-pipeline-execution \
-            --image-pipeline-arn "${{ vars.IMAGE_PIPELINE_ARN }}" \
+            --image-pipeline-arn "arn:aws:imagebuilder:ap-south-1:349311508967:image-pipeline/vocabulary-image-pipeline" \
             --query 'imageBuildVersionArn' \
             --output text)
 
