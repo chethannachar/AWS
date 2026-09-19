@@ -37,7 +37,7 @@ jobs:
             console.log("=================================");
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: arn:aws:iam::349311508967:role/VocabularyGitHubActionsRole
           aws-region: ap-south-1
