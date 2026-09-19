@@ -1,4 +1,4 @@
-name: Deploy Backend to AWS
+name: Test AWS OIDC
 
 on:
   push:
@@ -10,14 +10,11 @@ permissions:
   contents: read
 
 jobs:
-  deploy:
+  test-oidc:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Get GitHub OIDC claims
+      - name: Get GitHub OIDC token
         uses: actions/github-script@v7
         with:
           script: |
@@ -27,149 +24,23 @@ jobs:
               Buffer.from(token.split('.')[1], 'base64url').toString()
             );
 
-            console.log("========================================");
-            console.log("GitHub OIDC Claims");
-            console.log("========================================");
-            console.log("Issuer:", payload.iss);
-            console.log("Audience:", payload.aud);
-            console.log("Subject:", payload.sub);
-            console.log("Repository:", payload.repository);
-            console.log("Repository ID:", payload.repository_id);
-            console.log("Repository Owner:", payload.repository_owner);
-            console.log("Repository Owner ID:", payload.repository_owner_id);
-            console.log("Ref:", payload.ref);
-            console.log("Event Name:", payload.event_name);
-            console.log("========================================");
+            console.log("ISSUER:", payload.iss);
+            console.log("AUDIENCE:", payload.aud);
+            console.log("SUBJECT:", payload.sub);
+            console.log("REPOSITORY:", payload.repository);
+            console.log("REPOSITORY_ID:", payload.repository_id);
+            console.log("OWNER:", payload.repository_owner);
+            console.log("OWNER_ID:", payload.repository_owner_id);
+            console.log("REF:", payload.ref);
+            console.log("EVENT:", payload.event_name);
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::349311508967:role/VocabularyGitHubActionsRole
           aws-region: ap-south-1
-          role-session-name: GitHubActionsDeployment
+          role-session-name: GitHubActionsOIDCTest
 
       - name: Verify AWS identity
         run: |
           aws sts get-caller-identity
-
-      - name: Start Image Builder pipeline
-        id: image-builder
-        run: |
-          IMAGE_BUILD_VERSION_ARN=$(aws imagebuilder start-image-pipeline-execution \
-            --image-pipeline-arn "${{ vars.IMAGE_PIPELINE_ARN }}" \
-            --query 'imageBuildVersionArn' \
-            --output text)
-
-          echo "IMAGE_BUILD_VERSION_ARN=$IMAGE_BUILD_VERSION_ARN" >> "$GITHUB_ENV"
-
-          echo "Started Image Builder:"
-          echo "$IMAGE_BUILD_VERSION_ARN"
-
-      - name: Wait for AMI
-        run: |
-          echo "Waiting for Image Builder to finish..."
-
-          for i in {1..60}; do
-            STATUS=$(aws imagebuilder get-image \
-              --image-build-version-arn "$IMAGE_BUILD_VERSION_ARN" \
-              --query 'image.state.status' \
-              --output text)
-
-            echo "Attempt $i: $STATUS"
-
-            if [ "$STATUS" = "AVAILABLE" ]; then
-              break
-            fi
-
-            if [ "$STATUS" = "FAILED" ]; then
-              echo "Image Builder failed."
-              exit 1
-            fi
-
-            sleep 60
-          done
-
-          if [ "$STATUS" != "AVAILABLE" ]; then
-            echo "Image Builder did not complete within the expected time."
-            exit 1
-          fi
-
-      - name: Get new AMI ID
-        id: ami
-        run: |
-          NEW_AMI_ID=$(aws imagebuilder get-image \
-            --image-build-version-arn "$IMAGE_BUILD_VERSION_ARN" \
-            --query 'image.outputResources.amis[0].image' \
-            --output text)
-
-          echo "NEW_AMI_ID=$NEW_AMI_ID" >> "$GITHUB_ENV"
-
-          echo "New AMI:"
-          echo "$NEW_AMI_ID"
-
-      - name: Create new Launch Template version
-        id: launch-template
-        run: |
-          NEW_LT_VERSION=$(aws ec2 create-launch-template-version \
-            --launch-template-id "${{ vars.LAUNCH_TEMPLATE_ID }}" \
-            --source-version '$Latest' \
-            --version-description "GitHub Actions deployment - $GITHUB_SHA" \
-            --launch-template-data "{\"ImageId\":\"$NEW_AMI_ID\"}" \
-            --query 'LaunchTemplateVersion.VersionNumber' \
-            --output text)
-
-          echo "NEW_LT_VERSION=$NEW_LT_VERSION" >> "$GITHUB_ENV"
-
-          echo "New Launch Template version:"
-          echo "$NEW_LT_VERSION"
-
-      - name: Update Auto Scaling Group
-        run: |
-          aws autoscaling update-auto-scaling-group \
-            --auto-scaling-group-name "${{ vars.ASG_NAME }}" \
-            --launch-template "LaunchTemplateId=${{ vars.LAUNCH_TEMPLATE_ID }},Version=$NEW_LT_VERSION"
-
-          echo "Auto Scaling Group updated."
-
-      - name: Start Instance Refresh
-        id: refresh
-        run: |
-          REFRESH_ID=$(aws autoscaling start-instance-refresh \
-            --auto-scaling-group-name "${{ vars.ASG_NAME }}" \
-            --preferences MinHealthyPercentage=100 \
-            --query 'InstanceRefreshId' \
-            --output text)
-
-          echo "REFRESH_ID=$REFRESH_ID" >> "$GITHUB_ENV"
-
-          echo "Instance Refresh started:"
-          echo "$REFRESH_ID"
-
-      - name: Wait for Instance Refresh
-        run: |
-          echo "Waiting for instances to refresh..."
-
-          for i in {1..60}; do
-            STATUS=$(aws autoscaling describe-instance-refreshes \
-              --auto-scaling-group-name "${{ vars.ASG_NAME }}" \
-              --instance-refresh-ids "$REFRESH_ID" \
-              --query 'InstanceRefreshes[0].Status' \
-              --output text)
-
-            echo "Attempt $i: $STATUS"
-
-            if [ "$STATUS" = "Successful" ]; then
-              echo "Deployment completed successfully."
-              exit 0
-            fi
-
-            if [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Cancelled" ]; then
-              echo "Instance Refresh failed."
-              exit 1
-            fi
-
-            sleep 30
-          done
-
-          echo "Instance Refresh did not complete within the expected time."
-          exit 1
