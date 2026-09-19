@@ -1,3 +1,4 @@
+
 name: Deploy Backend to AWS
 
 on:
@@ -21,7 +22,7 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
+          aws-region: ap-south-1
 
       - name: Start Image Builder pipeline
         id: image-builder
@@ -144,3 +145,4 @@ jobs:
 
           echo "Instance Refresh did not complete within the expected time."
           exit 1
+
